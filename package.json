@@ -34,15 +34,20 @@
     "fmt": "oxfmt --check .",
     "fmt:write": "oxfmt .",
     "test": "vitest run",
-    "test:related": "vitest related --run"
+    "test:browser": "vitest run --config vitest.browser.config.ts",
+    "test:related": "vitest related --run",
+    "test:workerd": "vitest run --config vitest.workerd.config.ts"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.18.2",
     "@tsconfig/node24": "^24.0.4",
     "@tsconfig/strictest": "^2.0.8",
     "@types/node": "^24.13.3",
+    "@vitest/browser-playwright": "^4.1.10",
     "@vitest/coverage-v8": "^4.1.10",
     "oxfmt": "^0.59.0",
     "oxlint": "^1.74.0",
+    "playwright": "^1.61.1",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
   },

@@ -20,10 +20,12 @@ import {
   TruncationError,
 } from "./src/hazmat.js";
 import { loadVectors } from "./vectors-harness.js";
+import rawVectors128 from "./testdata/vectors_aes_128_gcm.json" with { type: "json" };
+import rawVectors256 from "./testdata/vectors_aes_256_gcm.json" with { type: "json" };
 
 const VECTOR_FILES = [
-  new URL("./testdata/vectors_aes_128_gcm.json", import.meta.url),
-  new URL("./testdata/vectors_aes_256_gcm.json", import.meta.url),
+  { name: "vectors_aes_128_gcm.json", raw: rawVectors128 },
+  { name: "vectors_aes_256_gcm.json", raw: rawVectors256 },
 ];
 
 async function sha512(data: Uint8Array): Promise<Uint8Array> {
@@ -122,10 +124,10 @@ function byteRangeSource(data: Uint8Array): ByteRangeSource {
   };
 }
 
-for (const url of VECTOR_FILES) {
-  describe(`raw chunked streams against ${url.pathname.split("/").pop()}`, () => {
+for (const { name, raw } of VECTOR_FILES) {
+  describe(`raw chunked streams against ${name}`, () => {
     it("decrypts, size-checks, and byte-exact re-encrypts every aeadKey vector", async () => {
-      const vectors = await loadVectors(url);
+      const vectors = await loadVectors(raw);
       let checked = 0;
 
       for (const v of vectors) {
@@ -170,7 +172,7 @@ for (const url of VECTOR_FILES) {
     });
 
     it("opens a random-access reader over rawPayload for every aeadKey vector", async () => {
-      const vectors = await loadVectors(url);
+      const vectors = await loadVectors(raw);
       let checked = 0;
 
       for (const v of vectors) {
@@ -312,9 +314,9 @@ function writerSlices(data: Uint8Array): Uint8Array[] {
 // same JSON hundreds of times.
 const HIGH_LEVEL_SUITES = await Promise.all(
   [
-    { url: new URL("./testdata/vectors_aes_128_gcm.json", import.meta.url), mod: cobblestone128 },
-    { url: new URL("./testdata/vectors_aes_256_gcm.json", import.meta.url), mod: cobblestone256 },
-  ].map(async (suite) => ({ ...suite, vectors: await loadVectors(suite.url) })),
+    { name: "vectors_aes_128_gcm.json", raw: rawVectors128, mod: cobblestone128 },
+    { name: "vectors_aes_256_gcm.json", raw: rawVectors256, mod: cobblestone256 },
+  ].map(async (suite) => ({ ...suite, vectors: await loadVectors(suite.raw) })),
 );
 
 // One it() per vector per category (via it.each), not a loop inside a
@@ -322,10 +324,10 @@ const HIGH_LEVEL_SUITES = await Promise.all(
 // entirely, and a per-vector failure only names itself through an
 // exception message. it.each's `$tcId`/`$comment` title interpolation
 // makes the failing vector the test name instead.
-for (const { url, mod, vectors } of HIGH_LEVEL_SUITES) {
+for (const { name, mod, vectors } of HIGH_LEVEL_SUITES) {
   const validVectors = vectors.filter((v) => v.result === "valid");
 
-  describe(`high-level API against ${url.pathname.split("/").pop()}`, () => {
+  describe(`high-level API against ${name}`, () => {
     it("loads exactly 35 vectors", () => {
       expect(vectors).toHaveLength(35);
     });

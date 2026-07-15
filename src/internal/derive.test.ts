@@ -2,22 +2,18 @@ import { describe, expect, it } from "vitest";
 import { InvalidKeyError, InvalidSizeError } from "../errors.js";
 import { loadVectors } from "../../vectors-harness.js";
 import { AES_128_GCM, AES_256_GCM, type AeadDescriptor, deriveMessageParams } from "./derive.js";
+import rawVectors128 from "../../testdata/vectors_aes_128_gcm.json" with { type: "json" };
+import rawVectors256 from "../../testdata/vectors_aes_256_gcm.json" with { type: "json" };
 
-const VECTOR_FILES: { url: URL; descriptor: AeadDescriptor }[] = [
-  {
-    url: new URL("../../testdata/vectors_aes_128_gcm.json", import.meta.url),
-    descriptor: AES_128_GCM,
-  },
-  {
-    url: new URL("../../testdata/vectors_aes_256_gcm.json", import.meta.url),
-    descriptor: AES_256_GCM,
-  },
+const VECTOR_FILES: { raw: unknown; descriptor: AeadDescriptor }[] = [
+  { raw: rawVectors128, descriptor: AES_128_GCM },
+  { raw: rawVectors256, descriptor: AES_256_GCM },
 ];
 
-for (const { url, descriptor } of VECTOR_FILES) {
+for (const { raw, descriptor } of VECTOR_FILES) {
   describe(`deriveMessageParams against ${descriptor.ianaName} vectors`, () => {
     it("derives aeadKey, baseNonce, and commitment matching the vectors", async () => {
-      const vectors = await loadVectors(url);
+      const vectors = await loadVectors(raw);
       let checked = 0;
 
       for (const v of vectors) {

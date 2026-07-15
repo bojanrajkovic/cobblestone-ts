@@ -1,4 +1,3 @@
-import { readFileSync } from "node:fs";
 import { concat, hexToBytes } from "./src/internal/bytes.js";
 
 export interface Vector {
@@ -51,8 +50,11 @@ async function inflate(bytes: Uint8Array): Promise<Uint8Array> {
   return concat(...chunks);
 }
 
-export async function loadVectors(path: string | URL): Promise<Vector[]> {
-  const raw = JSON.parse(readFileSync(path, "utf8")) as RawVectorFile;
+// Takes the already-parsed vector JSON (static `import` of the testdata
+// file) instead of a path — keeps this harness free of node:fs so it runs
+// under vitest on any runtime, including browser mode.
+export async function loadVectors(rawFile: unknown): Promise<Vector[]> {
+  const raw = rawFile as RawVectorFile;
   const vectors: Vector[] = [];
 
   for (const group of raw.testGroups) {
