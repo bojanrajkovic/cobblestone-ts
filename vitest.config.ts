@@ -7,8 +7,5 @@ export default defineConfig({
     coverage: {
       provider: "v8",
     },
-    // ponytail: passWithNoTests is temporary — there are no tests yet, this
-    // flips to false (or is removed) once phase 2 adds the first test file.
-    passWithNoTests: true,
   },
 });
