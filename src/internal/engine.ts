@@ -88,14 +88,14 @@ export function encryptTransformer(
   let filled = 0;
   let chunkIndex = startChunkIndex;
 
-  async function sealBuffered(
+  async function sealChunk(
     controller: TransformStreamDefaultController<Uint8Array>,
-    length: number,
+    data: Uint8Array,
   ): Promise<void> {
     if (chunkIndex >= MAX_CHUNKS) {
       throw new CounterOverflowError(`chunk index ${chunkIndex} exceeds ${MAX_CHUNKS}`);
     }
-    const sealed = await aead.seal(nonceFor(baseNonce, chunkIndex), buf.subarray(0, length));
+    const sealed = await aead.seal(nonceFor(baseNonce, chunkIndex), data);
     controller.enqueue(sealed);
     chunkIndex++;
   }
@@ -104,12 +104,23 @@ export function encryptTransformer(
     async transform(chunk, controller) {
       let offset = 0;
       while (offset < chunk.length) {
+        // Fast path: nothing buffered, and a full chunk is already
+        // contiguous in the caller's own write — seal it directly instead
+        // of staging a copy through `buf` first. Both AEAD backends read
+        // their plaintext argument synchronously (before any internal
+        // await), so handing out a view into the caller's chunk is safe —
+        // same mutation-hazard model as the copy this replaces.
+        if (filled === 0 && chunk.length - offset >= CHUNK_SIZE) {
+          await sealChunk(controller, chunk.subarray(offset, offset + CHUNK_SIZE));
+          offset += CHUNK_SIZE;
+          continue;
+        }
         const take = Math.min(CHUNK_SIZE - filled, chunk.length - offset);
         buf.set(chunk.subarray(offset, offset + take), filled);
         filled += take;
         offset += take;
         if (filled === CHUNK_SIZE) {
-          await sealBuffered(controller, CHUNK_SIZE);
+          await sealChunk(controller, buf.subarray(0, CHUNK_SIZE));
           filled = 0;
         }
       }
@@ -117,7 +128,7 @@ export function encryptTransformer(
     async flush(controller) {
       // The final chunk is always emitted, even if it's empty — this is
       // what lets a decryptor distinguish a clean end from truncation.
-      await sealBuffered(controller, filled);
+      await sealChunk(controller, buf.subarray(0, filled));
     },
   };
 }
@@ -141,6 +152,21 @@ export function decryptTransformer(
   // Removes and returns exactly n (<= pendingLength) bytes from the front of
   // the queue, splitting at most one array — no per-byte copies.
   function take(n: number): Uint8Array {
+    // Fast path: the first queued array alone already covers the request —
+    // return a view into it directly instead of allocating and copying into
+    // a fresh buffer. Safe for the same reason as the encrypt-side fast
+    // path: aead.open() reads its ciphertext argument synchronously.
+    const first = pending[0];
+    if (first !== undefined && first.length >= n) {
+      if (first.length === n) {
+        pending.shift();
+      } else {
+        pending[0] = first.subarray(n);
+      }
+      pendingLength -= n;
+      return first.subarray(0, n);
+    }
+
     const out = new Uint8Array(n);
     let filled = 0;
     while (filled < n) {
