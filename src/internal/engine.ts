@@ -1,5 +1,20 @@
-import { InvalidKeyError, InvalidSizeError } from "../errors.js";
+import {
+  CounterOverflowError,
+  InvalidKeyError,
+  InvalidSizeError,
+  TruncationError,
+} from "../errors.js";
 import type { Aead } from "./aes-gcm.js";
+
+// Structural stand-in for the WHATWG Transformer<I,O> interface. @types/node
+// only puts TransformStream (and its controller) in global scope; the
+// Transformer parameter type itself lives behind "node:stream/web", and
+// src/ stays off node:* imports even for types. This shape is what
+// TransformStream's constructor structurally accepts.
+interface Transformer<I, O> {
+  transform(chunk: I, controller: TransformStreamDefaultController<O>): Promise<void>;
+  flush(controller: TransformStreamDefaultController<O>): Promise<void>;
+}
 
 export const CHUNK_SIZE = 16384;
 export const CHUNK_OVERHEAD = 16;
@@ -58,4 +73,114 @@ export function encryptedChunkCount(encryptedSize: number): number {
 
 export function plaintextSize(encryptedSize: number): number {
   return encryptedSize - encryptedChunkCount(encryptedSize) * CHUNK_OVERHEAD;
+}
+
+export function encryptTransformer(
+  aead: Aead,
+  baseNonce: Uint8Array,
+): Transformer<Uint8Array, Uint8Array> {
+  const buf = new Uint8Array(CHUNK_SIZE);
+  let filled = 0;
+  let chunkIndex = 0;
+
+  async function sealBuffered(
+    controller: TransformStreamDefaultController<Uint8Array>,
+    length: number,
+  ): Promise<void> {
+    if (chunkIndex >= MAX_CHUNKS) {
+      throw new CounterOverflowError(`chunk index ${chunkIndex} exceeds ${MAX_CHUNKS}`);
+    }
+    const sealed = await aead.seal(nonceFor(baseNonce, chunkIndex), buf.subarray(0, length));
+    controller.enqueue(sealed);
+    chunkIndex++;
+  }
+
+  return {
+    async transform(chunk, controller) {
+      let offset = 0;
+      while (offset < chunk.length) {
+        const take = Math.min(CHUNK_SIZE - filled, chunk.length - offset);
+        buf.set(chunk.subarray(offset, offset + take), filled);
+        filled += take;
+        offset += take;
+        if (filled === CHUNK_SIZE) {
+          await sealBuffered(controller, CHUNK_SIZE);
+          filled = 0;
+        }
+      }
+    },
+    async flush(controller) {
+      // The final chunk is always emitted, even if it's empty — this is
+      // what lets a decryptor distinguish a clean end from truncation.
+      await sealBuffered(controller, filled);
+    },
+  };
+}
+
+export function decryptTransformer(
+  aead: Aead,
+  baseNonce: Uint8Array,
+): Transformer<Uint8Array, Uint8Array> {
+  const pending: Uint8Array[] = [];
+  let pendingLength = 0;
+  let chunkIndex = 0;
+
+  function push(chunk: Uint8Array): void {
+    pending.push(chunk);
+    pendingLength += chunk.length;
+  }
+
+  // Removes and returns exactly n (<= pendingLength) bytes from the front of
+  // the queue, splitting at most one array — no per-byte copies.
+  function take(n: number): Uint8Array {
+    const out = new Uint8Array(n);
+    let filled = 0;
+    while (filled < n) {
+      const head = pending[0];
+      if (head === undefined) break; // unreachable: caller guarantees pendingLength >= n
+      const need = n - filled;
+      if (head.length <= need) {
+        out.set(head, filled);
+        filled += head.length;
+        pending.shift();
+      } else {
+        out.set(head.subarray(0, need), filled);
+        pending[0] = head.subarray(need);
+        filled += need;
+      }
+    }
+    pendingLength -= n;
+    return out;
+  }
+
+  async function openNext(
+    controller: TransformStreamDefaultController<Uint8Array>,
+    sealed: Uint8Array,
+  ): Promise<void> {
+    if (chunkIndex >= MAX_CHUNKS) {
+      throw new CounterOverflowError(`chunk index ${chunkIndex} exceeds ${MAX_CHUNKS}`);
+    }
+    const plaintext = await aead.open(nonceFor(baseNonce, chunkIndex), sealed);
+    controller.enqueue(plaintext);
+    chunkIndex++;
+  }
+
+  return {
+    async transform(chunk, controller) {
+      push(chunk);
+      while (pendingLength >= ENC_CHUNK_SIZE) {
+        await openNext(controller, take(ENC_CHUNK_SIZE));
+      }
+    },
+    async flush(controller) {
+      // A stream that ends exactly on a full-chunk boundary is truncation,
+      // not success — the terminating short chunk (>=16 bytes) is mandatory.
+      if (pendingLength < CHUNK_OVERHEAD) {
+        throw new TruncationError(
+          `truncated final chunk: ${pendingLength} bytes remaining, need at least ${CHUNK_OVERHEAD}`,
+        );
+      }
+      await openNext(controller, take(pendingLength));
+    },
+  };
 }
