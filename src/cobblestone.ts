@@ -27,28 +27,58 @@ import {
 const HEADER_SIZE = 56;
 const SALT_SIZE = 24;
 
+/** Options accepted by every high-level encrypt/decrypt entry point. */
 export interface CobblestoneOptions {
+  /** Application-defined string bound into key derivation — not sent as AAD. Defaults to empty. */
   context?: string | Uint8Array;
 }
 
+/**
+ * The API surface produced by {@link makeCobblestone} for one AEAD size.
+ * cobblestone-128.ts and cobblestone-256.ts each instantiate one of these
+ * and re-export its members individually with size-specific docs.
+ */
 export interface CobblestoneInstance {
+  /** Required key length, in bytes, for every member below. */
   readonly KEY_SIZE: number;
+  /** Encrypts `plaintext` in one call. Rejects {@link InvalidKeyError} for a wrong key length. */
   encrypt(key: Uint8Array, plaintext: Uint8Array, opts?: CobblestoneOptions): Promise<Uint8Array>;
+  /**
+   * Decrypts a ciphertext produced by `encrypt` or `EncryptionStream`.
+   * Rejects {@link InvalidKeyError}, {@link TruncationError},
+   * {@link CommitmentMismatchError}, or {@link AuthenticationError}.
+   */
   decrypt(key: Uint8Array, ciphertext: Uint8Array, opts?: CobblestoneOptions): Promise<Uint8Array>;
+  /**
+   * A {@link TransformStream} that frames and encrypts written plaintext.
+   * Throws {@link InvalidKeyError} synchronously for a wrong key length.
+   */
   readonly EncryptionStream: new (
     key: Uint8Array,
     opts?: CobblestoneOptions,
   ) => TransformStream<Uint8Array, Uint8Array>;
+  /**
+   * A {@link TransformStream} that decrypts a framed ciphertext stream.
+   * Throws {@link InvalidKeyError} synchronously for a wrong key length;
+   * once fed data, rejects per `decrypt`'s rules.
+   */
   readonly DecryptionStream: new (
     key: Uint8Array,
     opts?: CobblestoneOptions,
   ) => TransformStream<Uint8Array, Uint8Array>;
+  /**
+   * Opens a random-access {@link DecryptingReader} over `source`. Rejects
+   * {@link InvalidKeyError}, {@link InvalidSizeError},
+   * {@link TruncationError}, or {@link CommitmentMismatchError}.
+   */
   openDecryptingReader(
     key: Uint8Array,
     source: Blob | ByteRangeSource,
     opts?: CobblestoneOptions,
   ): Promise<DecryptingReader>;
+  /** Computes the plaintext length for a ciphertext of `n` bytes. Throws {@link InvalidSizeError} if invalid. */
   plaintextSize(n: number): number;
+  /** Computes the ciphertext length for a plaintext of `n` bytes. Throws {@link InvalidSizeError} if out of range. */
   ciphertextSize(n: number): number;
 }
 

@@ -17,8 +17,8 @@ const c: CobblestoneInstance = makeCobblestone(AES_128_GCM);
 export const KEY_SIZE = 16;
 
 /**
- * Encrypts `plaintext` in one call. Throws/rejects {@link InvalidKeyError}
- * if `key.length !== KEY_SIZE`.
+ * Encrypts `plaintext` in one call. Rejects {@link InvalidKeyError} if
+ * `key.length !== KEY_SIZE`.
  */
 export const encrypt: typeof c.encrypt = c.encrypt;
 
