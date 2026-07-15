@@ -23,7 +23,7 @@ export async function hkdfExpandSha512(
   if (nodeCryptoFastPathActive) {
     const { createHmac } = await nodeCrypto();
     const counter = new Uint8Array(1);
-    let previous: Uint8Array = out.subarray(0, 0);
+    let previous: Uint8Array = new Uint8Array(0);
 
     for (let i = 1; i <= blocks; i++) {
       counter[0] = i;

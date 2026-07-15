@@ -181,9 +181,6 @@ export function makeCobblestone(d: AeadDescriptor): CobblestoneInstance {
     plaintext: Uint8Array,
     opts?: CobblestoneOptions,
   ): Promise<Uint8Array> {
-    if (key.length !== d.keySize) {
-      throw new InvalidKeyError(`key must be ${d.keySize} bytes, got ${key.length}`);
-    }
     const context = normalizeContext(opts?.context);
 
     const salt = crypto.getRandomValues(new Uint8Array(SALT_SIZE));
