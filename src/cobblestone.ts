@@ -220,8 +220,12 @@ export function makeCobblestone(d: AeadDescriptor): CobblestoneInstance {
 
   return {
     KEY_SIZE: d.keySize,
-    encrypt: (key, plaintext, opts) => runOneShot(new EncryptionStream(key, opts), plaintext),
-    decrypt: (key, ciphertext, opts) => runOneShot(new DecryptionStream(key, opts), ciphertext),
+    // async, not a plain arrow returning runOneShot's promise: a bad key
+    // size throws synchronously from `new EncryptionStream`/`DecryptionStream`,
+    // and one-shots must reject rather than throw across the call.
+    encrypt: async (key, plaintext, opts) => runOneShot(new EncryptionStream(key, opts), plaintext),
+    decrypt: async (key, ciphertext, opts) =>
+      runOneShot(new DecryptionStream(key, opts), ciphertext),
     EncryptionStream,
     DecryptionStream,
     openDecryptingReader,
