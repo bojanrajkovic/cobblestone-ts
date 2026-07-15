@@ -1,0 +1,11 @@
+{
+  "name": "cobblestone-ts",
+  "version": "0.0.0",
+  "description": "Placeholder — TypeScript implementation of the C2SP chunked-encryption scheme (Cobblestone-128/256). Real releases start at 0.1.0.",
+  "license": "BSD-3-Clause",
+  "type": "module",
+  "sideEffects": false,
+  "engines": { "node": ">=22.12" },
+  "repository": { "type": "git", "url": "git+https://github.com/bojanrajkovic/cobblestone-ts.git" },
+  "keywords": ["c2sp", "chunked-encryption", "cobblestone", "aes-gcm", "streaming-encryption", "webcrypto"]
+}
