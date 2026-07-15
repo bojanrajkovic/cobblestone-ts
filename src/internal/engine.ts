@@ -19,7 +19,7 @@ interface Transformer<I, O> {
 export const CHUNK_SIZE = 16384;
 export const CHUNK_OVERHEAD = 16;
 const ENC_CHUNK_SIZE = CHUNK_SIZE + CHUNK_OVERHEAD;
-const MAX_CHUNKS = 2 ** 38;
+export const MAX_CHUNKS: number = 2 ** 38;
 
 export function checkAead(aead: Aead, baseNonce: Uint8Array): void {
   if (aead.overhead !== 16) {
