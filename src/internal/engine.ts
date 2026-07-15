@@ -78,10 +78,15 @@ export function plaintextSize(encryptedSize: number): number {
 export function encryptTransformer(
   aead: Aead,
   baseNonce: Uint8Array,
+  // ponytail: chunkIndex is closure-local and otherwise unreachable from
+  // outside — this test-only starting point lets CounterOverflowError be
+  // exercised without actually driving 2**38 chunks through the
+  // transformer. hazmat.ts never passes it.
+  startChunkIndex = 0,
 ): Transformer<Uint8Array, Uint8Array> {
   const buf = new Uint8Array(CHUNK_SIZE);
   let filled = 0;
-  let chunkIndex = 0;
+  let chunkIndex = startChunkIndex;
 
   async function sealBuffered(
     controller: TransformStreamDefaultController<Uint8Array>,
@@ -120,10 +125,13 @@ export function encryptTransformer(
 export function decryptTransformer(
   aead: Aead,
   baseNonce: Uint8Array,
+  // ponytail: see encryptTransformer's startChunkIndex — same test-only
+  // escape hatch, same reason. hazmat.ts never passes it.
+  startChunkIndex = 0,
 ): Transformer<Uint8Array, Uint8Array> {
   const pending: Uint8Array[] = [];
   let pendingLength = 0;
-  let chunkIndex = 0;
+  let chunkIndex = startChunkIndex;
 
   function push(chunk: Uint8Array): void {
     pending.push(chunk);

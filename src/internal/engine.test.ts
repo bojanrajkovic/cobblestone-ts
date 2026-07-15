@@ -1,7 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { InvalidKeyError, InvalidSizeError } from "../errors.js";
+import {
+  CounterOverflowError,
+  InvalidKeyError,
+  InvalidSizeError,
+  TruncationError,
+} from "../errors.js";
 import type { Aead } from "./aes-gcm.js";
-import { checkAead, encryptedChunkCount, nonceFor, plaintextSize } from "./engine.js";
+import { concat } from "./bytes.js";
+import {
+  checkAead,
+  decryptTransformer,
+  encryptedChunkCount,
+  encryptTransformer,
+  nonceFor,
+  plaintextSize,
+} from "./engine.js";
 
 // Independent BigInt path: XOR the last 5 bytes of baseNonce with chunkIndex
 // directly, rather than replicating nonceFor's Math.floor/>>> arithmetic.
@@ -105,5 +118,113 @@ describe("plaintextSize", () => {
 
   it.each([0, 16400])("propagates InvalidSizeError for impossible sizes (%d)", (size) => {
     expect(() => plaintextSize(size)).toThrow(InvalidSizeError);
+  });
+});
+
+// A fake Aead that skips real crypto: seal appends 16 zero bytes and
+// records the nonce it was called with, open strips the last 16 bytes
+// unconditionally. Fast and deterministic for exercising the transformers'
+// buffering/boundary logic in isolation from aes-gcm.ts (already covered by
+// its own tests and by the vector suite).
+function fakeChunkAead(): { aead: Aead; sealedNonces: Uint8Array[] } {
+  const sealedNonces: Uint8Array[] = [];
+  const aead: Aead = {
+    nonceSize: 12,
+    overhead: 16,
+    seal: (nonce, plaintext) => {
+      sealedNonces.push(nonce.slice());
+      return Promise.resolve(concat(plaintext, new Uint8Array(16)));
+    },
+    open: (_nonce, ciphertext) => Promise.resolve(ciphertext.subarray(0, ciphertext.length - 16)),
+  };
+  return { aead, sealedNonces };
+}
+
+function fakeController(): {
+  controller: TransformStreamDefaultController<Uint8Array>;
+  chunks: Uint8Array[];
+} {
+  const chunks: Uint8Array[] = [];
+  const controller = {
+    enqueue: (chunk: Uint8Array) => chunks.push(chunk),
+  } as unknown as TransformStreamDefaultController<Uint8Array>;
+  return { controller, chunks };
+}
+
+describe("encryptTransformer (fake aead)", () => {
+  const baseNonce = new Uint8Array(12).fill(0x7);
+
+  async function runEncrypt(size: number): Promise<{ chunks: Uint8Array[]; nonces: Uint8Array[] }> {
+    const { aead, sealedNonces } = fakeChunkAead();
+    const t = encryptTransformer(aead, baseNonce);
+    const { controller, chunks } = fakeController();
+    await t.transform(crypto.getRandomValues(new Uint8Array(size)), controller);
+    await t.flush(controller);
+    return { chunks, nonces: sealedNonces };
+  }
+
+  it.each([
+    [0, [16]],
+    [1, [17]],
+    [16383, [16399]],
+    [16384, [16400, 16]],
+    [16385, [16400, 17]],
+    [32768, [16400, 16400, 16]],
+  ])("chunks a %d-byte input into sealed chunks of length %j", async (size, lengths) => {
+    const { chunks, nonces } = await runEncrypt(size);
+    expect(chunks.map((c) => c.length)).toEqual(lengths);
+    expect(nonces).toHaveLength(lengths.length);
+    nonces.forEach((n, i) => expect(n).toEqual(nonceFor(baseNonce, i)));
+  });
+
+  it("rejects sealing once chunkIndex reaches MAX_CHUNKS", async () => {
+    const { aead } = fakeChunkAead();
+    const t = encryptTransformer(aead, baseNonce, 2 ** 38); // ponytail: see engine.ts's startChunkIndex
+    const { controller } = fakeController();
+    await expect(t.flush(controller)).rejects.toThrow(CounterOverflowError);
+  });
+});
+
+describe("decryptTransformer (fake aead)", () => {
+  const baseNonce = new Uint8Array(12).fill(0x9);
+
+  it("opens exactly at the 16400-byte boundary during transform, buffering nothing across it", async () => {
+    const { aead } = fakeChunkAead();
+    const t = decryptTransformer(aead, baseNonce);
+    const { controller, chunks } = fakeController();
+
+    await t.transform(new Uint8Array(16400), controller);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]).toHaveLength(16384);
+
+    // Nothing left buffered — flush() on an empty queue is truncation, not
+    // a (missing) second chunk.
+    await expect(t.flush(controller)).rejects.toThrow(TruncationError);
+  });
+
+  it.each([0, 15])("flush() with %d pending bytes is truncation", async (pending) => {
+    const { aead } = fakeChunkAead();
+    const t = decryptTransformer(aead, baseNonce);
+    const { controller } = fakeController();
+    if (pending > 0) await t.transform(new Uint8Array(pending), controller);
+    await expect(t.flush(controller)).rejects.toThrow(TruncationError);
+  });
+
+  it("flush() with exactly 16 pending bytes opens an empty final chunk", async () => {
+    const { aead } = fakeChunkAead();
+    const t = decryptTransformer(aead, baseNonce);
+    const { controller, chunks } = fakeController();
+    await t.transform(new Uint8Array(16), controller);
+    await t.flush(controller);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]).toHaveLength(0);
+  });
+
+  it("rejects opening once chunkIndex reaches MAX_CHUNKS", async () => {
+    const { aead } = fakeChunkAead();
+    const t = decryptTransformer(aead, baseNonce, 2 ** 38); // ponytail: see engine.ts's startChunkIndex
+    const { controller } = fakeController();
+    await t.transform(new Uint8Array(16), controller); // buffered, not yet opened
+    await expect(t.flush(controller)).rejects.toThrow(CounterOverflowError);
   });
 });
