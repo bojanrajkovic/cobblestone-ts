@@ -187,3 +187,43 @@ describe("DecryptionStream header edges", () => {
     expect(delivered).toEqual(plaintext);
   });
 });
+
+// Reviewer addendum: the four guard branches the coverage run reported
+// uncovered — two of them (header-short plaintextSize, lying source size)
+// are explicit phase-spec requirements.
+describe("guard branches", () => {
+  it("plaintextSize rejects a size smaller than the header", () => {
+    expect(() => cobblestone128.plaintextSize(55)).toThrow(InvalidSizeError);
+  });
+
+  it("openDecryptingReader rejects a source reporting an invalid size", async () => {
+    const key = new Uint8Array(cobblestone128.KEY_SIZE);
+    for (const size of [-1, 0.5]) {
+      await expect(
+        cobblestone128.openDecryptingReader(key, {
+          size,
+          readAt: () => Promise.resolve(new Uint8Array(0)),
+        }),
+      ).rejects.toBeInstanceOf(InvalidSizeError);
+    }
+  });
+
+  it("deriveMessageParams treats a string context as its UTF-8 bytes", async () => {
+    const { AES_128_GCM, deriveMessageParams } = await import("./src/internal/derive.js");
+    const key = new Uint8Array(16).fill(7);
+    const salt = new Uint8Array(24).fill(9);
+    const fromString = await deriveMessageParams(AES_128_GCM, key, salt, "ctx");
+    const fromBytes = await deriveMessageParams(
+      AES_128_GCM,
+      key,
+      salt,
+      new TextEncoder().encode("ctx"),
+    );
+    expect(fromString.commitment).toEqual(fromBytes.commitment);
+  });
+
+  it("constantTimeEqual is false for length-mismatched inputs", async () => {
+    const { constantTimeEqual } = await import("./src/internal/bytes.js");
+    expect(constantTimeEqual(new Uint8Array(32), new Uint8Array(31))).toBe(false);
+  });
+});
