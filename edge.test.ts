@@ -2,8 +2,11 @@
 // implementation's edge tests. Each describe block names the Go ancestor
 // it's standing in for.
 
-import { setTimeout as delay } from "node:timers/promises";
 import { beforeAll, describe, expect, it } from "vitest";
+
+// Plain-setTimeout delay instead of node:timers/promises — works in
+// browser-mode vitest runs too.
+const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 import * as cobblestone128 from "./src/cobblestone-128.js";
 import * as cobblestone256 from "./src/cobblestone-256.js";
 import { CHUNK_SIZE } from "./src/internal/engine.js";
