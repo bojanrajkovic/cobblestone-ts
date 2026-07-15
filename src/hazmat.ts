@@ -11,7 +11,14 @@
  */
 
 import type { Aead } from "./internal/aes-gcm.js";
-import { checkAead, decryptTransformer, encryptTransformer } from "./internal/engine.js";
+import type { ByteRangeSource, DecryptingReader } from "./internal/engine.js";
+import {
+  checkAead,
+  decryptTransformer,
+  encryptTransformer,
+  normalizeSource,
+  openRawReader,
+} from "./internal/engine.js";
 
 export {
   AuthenticationError,
@@ -22,7 +29,7 @@ export {
   InvalidSizeError,
   TruncationError,
 } from "./errors.js";
-export type { Aead };
+export type { Aead, ByteRangeSource, DecryptingReader };
 export { aesGcm } from "./internal/aes-gcm.js";
 
 export const CHUNK_SIZE = 16384;
@@ -43,3 +50,12 @@ export class RawDecryptionStream extends TransformStream<Uint8Array, Uint8Array>
 }
 
 export { encryptedChunkCount, plaintextSize } from "./internal/engine.js";
+
+export async function openRawDecryptingReader(
+  aead: Aead,
+  baseNonce: Uint8Array,
+  source: Blob | ByteRangeSource,
+): Promise<DecryptingReader> {
+  checkAead(aead, baseNonce);
+  return openRawReader(aead, baseNonce, normalizeSource(source));
+}

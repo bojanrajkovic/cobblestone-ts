@@ -184,3 +184,111 @@ export function decryptTransformer(
     },
   };
 }
+
+export interface ByteRangeSource {
+  readonly size: number;
+  readAt(offset: number, length: number): Promise<Uint8Array>;
+}
+
+export interface DecryptingReader {
+  readonly plaintextSize: number;
+  readAt(offset: number, length: number): Promise<Uint8Array>;
+}
+
+export type NormalizedSource = {
+  size: number;
+  readAt(offset: number, length: number): Promise<Uint8Array>;
+};
+
+export function normalizeSource(source: Blob | ByteRangeSource): NormalizedSource {
+  if (typeof Blob !== "undefined" && source instanceof Blob) {
+    return {
+      size: source.size,
+      async readAt(offset, length) {
+        return new Uint8Array(await source.slice(offset, offset + length).arrayBuffer());
+      },
+    };
+  }
+
+  // Not a Blob per the guard above, so this can only be the other union
+  // member — TS can't narrow through the `typeof Blob !== "undefined" &&`
+  // guard on its own.
+  const byteRangeSource = source as ByteRangeSource;
+  if (!Number.isSafeInteger(byteRangeSource.size) || byteRangeSource.size < 0) {
+    throw new InvalidSizeError(
+      `source size must be a non-negative safe integer, got ${byteRangeSource.size}`,
+    );
+  }
+  return byteRangeSource;
+}
+
+export function sectionSource(s: NormalizedSource, offset: number): NormalizedSource {
+  return {
+    size: s.size - offset,
+    readAt: (o, l) => s.readAt(o + offset, l),
+  };
+}
+
+export async function openRawReader(
+  aead: Aead,
+  baseNonce: Uint8Array,
+  source: NormalizedSource,
+): Promise<DecryptingReader> {
+  const chunks = encryptedChunkCount(source.size);
+  const ptSize = source.size - chunks * CHUNK_OVERHEAD;
+
+  let cache: { chunkIndex: number; plaintext: Uint8Array } | undefined;
+
+  async function openChunk(chunkIndex: number): Promise<Uint8Array> {
+    if (cache?.chunkIndex === chunkIndex) return cache.plaintext;
+
+    const chunkOffset = chunkIndex * ENC_CHUNK_SIZE;
+    const sealedLength = Math.min(ENC_CHUNK_SIZE, source.size - chunkOffset);
+    const sealed = await source.readAt(chunkOffset, sealedLength);
+    if (sealed.length !== sealedLength) {
+      throw new TruncationError(
+        `short read for chunk ${chunkIndex}: expected ${sealedLength} bytes, got ${sealed.length}`,
+      );
+    }
+
+    const plaintext = await aead.open(nonceFor(baseNonce, chunkIndex), sealed);
+    cache = { chunkIndex, plaintext }; // advisory, single-entry — never decrypt into a cached buffer
+    return plaintext;
+  }
+
+  // Eagerly authenticate the final chunk now: this pins the message length
+  // at open() time instead of trusting an unverified source.size.
+  await openChunk(chunks - 1);
+
+  return {
+    plaintextSize: ptSize,
+
+    async readAt(offset, length) {
+      if (!Number.isSafeInteger(offset) || offset < 0) {
+        throw new InvalidSizeError(`offset must be a non-negative safe integer, got ${offset}`);
+      }
+      if (!Number.isSafeInteger(length) || length < 0) {
+        throw new InvalidSizeError(`length must be a non-negative safe integer, got ${length}`);
+      }
+      if (offset > ptSize) {
+        throw new InvalidSizeError(`offset ${offset} exceeds plaintext size ${ptSize}`);
+      }
+      if (length === 0) return new Uint8Array(0);
+
+      const n = Math.min(length, ptSize - offset);
+      const result = new Uint8Array(n);
+      let pos = offset;
+      let filled = 0;
+      while (filled < n) {
+        const chunkIndex = Math.floor(pos / CHUNK_SIZE);
+        const plaintext = await openChunk(chunkIndex);
+        const withinChunk = pos - chunkIndex * CHUNK_SIZE;
+        const take = Math.min(plaintext.length - withinChunk, n - filled);
+        result.set(plaintext.subarray(withinChunk, withinChunk + take), filled);
+        filled += take;
+        pos += take;
+      }
+      return result;
+    },
+  };
+}

@@ -3,9 +3,11 @@ import { concat } from "./src/internal/bytes.js";
 import {
   type Aead,
   aesGcm,
+  type ByteRangeSource,
   CobblestoneError,
   encryptedChunkCount,
   InvalidSizeError,
+  openRawDecryptingReader,
   plaintextSize,
   RawDecryptionStream,
   RawEncryptionStream,
@@ -106,6 +108,13 @@ function isArithmeticallyValidLength(length: number): boolean {
   return remaining >= 16 && remaining <= 16399;
 }
 
+function byteRangeSource(data: Uint8Array): ByteRangeSource {
+  return {
+    size: data.length,
+    readAt: (offset, length) => Promise.resolve(data.subarray(offset, offset + length)),
+  };
+}
+
 for (const url of VECTOR_FILES) {
   describe(`raw chunked streams against ${url.pathname.split("/").pop()}`, () => {
     it("decrypts, size-checks, and byte-exact re-encrypts every aeadKey vector", async () => {
@@ -145,6 +154,53 @@ for (const url of VECTOR_FILES) {
           if (v.tcId === 31) {
             expect(delivered.length, "tc31 sentinel: full chunk delivered before truncation").toBe(
               16384,
+            );
+          }
+        }
+      }
+
+      expect(checked).toBe(25);
+    });
+
+    it("opens a random-access reader over rawPayload for every aeadKey vector", async () => {
+      const vectors = await loadVectors(url);
+      let checked = 0;
+
+      for (const v of vectors) {
+        if (v.aeadKey === undefined || v.baseNonce === undefined) continue; // tc21-30 lack derived params by design
+        checked++;
+
+        const rawPayload = v.ct.subarray(56);
+        const aead = await aesGcm(v.aeadKey);
+        const label = `tc${v.tcId}: ${v.comment}`;
+
+        // tc1 additionally proves the Blob-detection path in normalizeSource.
+        const sources: (Blob | ByteRangeSource)[] = [byteRangeSource(rawPayload)];
+        if (v.tcId === 1) sources.push(new Blob([rawPayload]));
+
+        for (const source of sources) {
+          let reader: Awaited<ReturnType<typeof openRawDecryptingReader>> | undefined;
+          let openError: unknown;
+          try {
+            reader = await openRawDecryptingReader(aead, v.baseNonce, source);
+          } catch (e) {
+            openError = e;
+          }
+
+          if (v.result === "valid") {
+            expect(openError, label).toBeUndefined();
+            const full = await reader?.readAt(0, reader.plaintextSize);
+            expect(full?.length, label).toBe(v.msgLength);
+            expect(await sha512(full ?? new Uint8Array(0)), label).toEqual(v.msgSha512);
+            expect((await reader?.readAt(reader.plaintextSize, 1))?.length, label).toBe(0);
+          } else if (openError !== undefined) {
+            expect(openError, label).toBeInstanceOf(CobblestoneError);
+          } else {
+            // Final chunk happened to authenticate (e.g. a chunk-reorder
+            // vector) — the corruption must still surface somewhere in a
+            // full read.
+            await expect(reader?.readAt(0, reader.plaintextSize), label).rejects.toBeInstanceOf(
+              CobblestoneError,
             );
           }
         }
