@@ -1,12 +1,9 @@
 {
+  "extends": ["@tsconfig/strictest/tsconfig.json", "@tsconfig/node24/tsconfig.json"],
   "compilerOptions": {
-    "module": "nodenext",
-    "target": "es2023",
-    "strict": true,
     "declaration": true,
     "isolatedDeclarations": true,
     "verbatimModuleSyntax": true,
-    "noUncheckedIndexedAccess": true,
     "rootDir": "src",
     "outDir": "dist"
   },
