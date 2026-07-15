@@ -35,9 +35,11 @@
     "fmt:write": "oxfmt .",
     "test": "vitest run",
     "test:browser": "vitest run --config vitest.browser.config.ts",
-    "test:related": "vitest related --run"
+    "test:related": "vitest related --run",
+    "test:workerd": "vitest run --config vitest.workerd.config.ts"
   },
   "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "^0.18.2",
     "@tsconfig/node24": "^24.0.4",
     "@tsconfig/strictest": "^2.0.8",
     "@types/node": "^24.13.3",

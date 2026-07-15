@@ -1,3 +1,10 @@
+# Build scripts are opt-in: only workerd needs its postinstall (places the
+# platform binary); esbuild and sharp ship prebuilt binaries as optional
+# deps and work with their scripts skipped.
+allowBuilds:
+  esbuild: false
+  sharp: false
+  workerd: true
 minimumReleaseAge: 10080 # 7 days, in minutes
 minimumReleaseAgeExclude:
   - "@oxfmt/binding-android-arm-eabi@0.59.0"
