@@ -4,8 +4,9 @@
 
 import { describe, expect, it } from "vitest";
 import * as cobblestone128 from "./src/cobblestone-128.js";
+import * as cobblestone256 from "./src/cobblestone-256.js";
 import { CHUNK_SIZE } from "./src/internal/engine.js";
-import { concat } from "./src/internal/bytes.js";
+import { concat, utf8 } from "./src/internal/bytes.js";
 
 // Deterministic counter pattern — content doesn't matter for these tests,
 // only length, and this is cheaper than crypto.getRandomValues at the
@@ -248,5 +249,101 @@ describe("write-after-close (Go: EncryptWriter double-Close)", () => {
     await writer.close();
     await expect(writer.write(new Uint8Array(1))).rejects.toThrow();
     await expect(writer.close()).rejects.toThrow();
+  });
+});
+
+// KEY_SIZE is a literal (16 vs 32) on each module, so `typeof cobblestone128`
+// itself isn't a common type for both — widen just the fields this sweep uses.
+interface CobblestoneModule {
+  KEY_SIZE: number;
+  encrypt: typeof cobblestone128.encrypt;
+  decrypt: typeof cobblestone128.decrypt;
+  ciphertextSize: typeof cobblestone128.ciphertextSize;
+  plaintextSize: typeof cobblestone128.plaintextSize;
+}
+
+const MODULES: [string, CobblestoneModule][] = [
+  ["cobblestone-128", cobblestone128],
+  ["cobblestone-256", cobblestone256],
+];
+
+describe.each(MODULES)(
+  "boundary round-trips (Go: TestRoundTrip size sweep) — %s",
+  (_label, mod) => {
+    it.each([0, 1, 15, 16, 16383, 16384, 16385, 32767, 32768, 32769, 65536, 100000])(
+      "round-trips a %d-byte plaintext",
+      async (size) => {
+        const key = crypto.getRandomValues(new Uint8Array(mod.KEY_SIZE));
+        const plaintext = fillPattern(size);
+        const ciphertext = await mod.encrypt(key, plaintext);
+
+        expect(ciphertext.length).toBe(mod.ciphertextSize(size));
+        expect(mod.plaintextSize(ciphertext.length)).toBe(size);
+        expect(await mod.decrypt(key, ciphertext)).toEqual(plaintext);
+      },
+    );
+  },
+);
+
+describe("context binding (Go: TestContext, TestWrongKey)", () => {
+  const plaintext = fillPattern(1000);
+
+  const CONTEXT_VARIANTS: [string, string | Uint8Array][] = [
+    ["a string context", "some context"],
+    ["a Uint8Array context", utf8("some context")],
+    ["a string context containing a space", "some context with spaces"],
+  ];
+
+  it.each(CONTEXT_VARIANTS)("round-trips with %s", async (_label, context) => {
+    const key = randomKey();
+    const ciphertext = await cobblestone128.encrypt(key, plaintext, { context });
+    expect(await cobblestone128.decrypt(key, ciphertext, { context })).toEqual(plaintext);
+  });
+
+  it("treats a string context and its UTF-8-equivalent Uint8Array as the same context", async () => {
+    const key = randomKey();
+
+    const ciphertextFromString = await cobblestone128.encrypt(key, plaintext, { context: "a" });
+    expect(
+      await cobblestone128.decrypt(key, ciphertextFromString, { context: new Uint8Array([0x61]) }),
+    ).toEqual(plaintext);
+
+    const ciphertextFromBytes = await cobblestone128.encrypt(key, plaintext, {
+      context: new Uint8Array([0x61]),
+    });
+    expect(await cobblestone128.decrypt(key, ciphertextFromBytes, { context: "a" })).toEqual(
+      plaintext,
+    );
+  });
+
+  it("rejects CommitmentMismatchError for the wrong context", async () => {
+    const key = randomKey();
+    const ciphertext = await cobblestone128.encrypt(key, plaintext, { context: "right" });
+    await expect(
+      cobblestone128.decrypt(key, ciphertext, { context: "wrong" }),
+    ).rejects.toBeInstanceOf(cobblestone128.CommitmentMismatchError);
+  });
+
+  it("rejects CommitmentMismatchError for the wrong key (same length)", async () => {
+    const key = randomKey();
+    const wrongKey = randomKey();
+    const ciphertext = await cobblestone128.encrypt(key, plaintext);
+    await expect(cobblestone128.decrypt(wrongKey, ciphertext)).rejects.toBeInstanceOf(
+      cobblestone128.CommitmentMismatchError,
+    );
+  });
+
+  it("treats an omitted context as equivalent to an empty context", async () => {
+    const key = randomKey();
+
+    const ciphertextOmitted = await cobblestone128.encrypt(key, plaintext);
+    expect(
+      await cobblestone128.decrypt(key, ciphertextOmitted, { context: new Uint8Array(0) }),
+    ).toEqual(plaintext);
+
+    const ciphertextEmpty = await cobblestone128.encrypt(key, plaintext, {
+      context: new Uint8Array(0),
+    });
+    expect(await cobblestone128.decrypt(key, ciphertextEmpty)).toEqual(plaintext);
   });
 });
