@@ -7,5 +7,20 @@
   "sideEffects": false,
   "engines": { "node": ">=22.12" },
   "repository": { "type": "git", "url": "git+https://github.com/bojanrajkovic/cobblestone-ts.git" },
-  "keywords": ["c2sp", "chunked-encryption", "cobblestone", "aes-gcm", "streaming-encryption", "webcrypto"]
+  "keywords": ["c2sp", "chunked-encryption", "cobblestone", "aes-gcm", "streaming-encryption", "webcrypto"],
+  "files": ["dist"],
+  "exports": {
+    ".": "./dist/index.js",
+    "./cobblestone-128": "./dist/cobblestone-128.js",
+    "./cobblestone-256": "./dist/cobblestone-256.js",
+    "./hazmat": "./dist/hazmat.js",
+    "./errors": "./dist/errors.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.test.json --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2"
+  }
 }
