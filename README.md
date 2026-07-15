@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/bojanrajkovic/cobblestone-ts/actions/workflows/ci.yml/badge.svg)](https://github.com/bojanrajkovic/cobblestone-ts/actions/workflows/ci.yml)
 
-TypeScript implementation of the [C2SP chunked-encryption scheme](https://c2sp.org/chunked-encryption), ported from the Go reference implementation [filippo.io/cobblestone](https://github.com/FiloSottile/cobblestone). It ships two instantiations — Cobblestone-128 (SHA-512 + AES-128-GCM, the spec-recommended default) and Cobblestone-256 (SHA-512 + AES-256-GCM, for compliance requirements that mandate 256-bit keys). ESM-only, zero runtime dependencies, all cryptography through WebCrypto (`crypto.subtle`) — no native bindings and no `node:` imports, so the API surface is universal (browsers, Deno, Bun, edge runtimes). CI runs the full test suite on Node ≥24, Bun, Deno, Chromium, WebKit, and workerd (the Cloudflare Workers runtime).
+TypeScript implementation of the [C2SP chunked-encryption scheme](https://c2sp.org/chunked-encryption), ported from the Go reference implementation [filippo.io/cobblestone](https://github.com/FiloSottile/cobblestone). It ships two instantiations — Cobblestone-128 (SHA-512 + AES-128-GCM, the spec-recommended default) and Cobblestone-256 (SHA-512 + AES-256-GCM, for compliance requirements that mandate 256-bit keys). ESM-only, zero runtime dependencies, all cryptography through WebCrypto (`crypto.subtle`) — no native bindings and no `node:` imports, so the API surface is universal (browsers, Deno, Bun, edge runtimes). CI runs the full test suite on Node ≥24, Bun, Deno, Chromium, WebKit, Firefox, and workerd (the Cloudflare Workers runtime).
 
 ## Install
 
