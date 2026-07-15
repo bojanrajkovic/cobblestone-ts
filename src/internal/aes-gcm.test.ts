@@ -45,6 +45,20 @@ describe("aesGcm round-trip", () => {
   it.each([15, 17, 24, 33])("rejects a %d-byte key", async (size) => {
     await expect(aesGcm(new Uint8Array(size))).rejects.toThrow(InvalidKeyError);
   });
+
+  it("is immune to the caller mutating the key after aesGcm() resolves", async () => {
+    const mutableKey = crypto.getRandomValues(new Uint8Array(16));
+    const originalKey = mutableKey.slice();
+    const aead = await aesGcm(mutableKey);
+
+    mutableKey.fill(0); // simulate zeroing key material once the Aead is derived
+
+    const plaintext = new Uint8Array([1, 2, 3]);
+    const sealed = await aead.seal(nonce, plaintext);
+
+    const referenceAead = await aesGcm(originalKey);
+    expect(sealed).toEqual(await referenceAead.seal(nonce, plaintext));
+  });
 });
 
 describe("aesGcm cross-implementation check against node:crypto", () => {
