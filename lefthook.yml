@@ -1,0 +1,11 @@
+pre-commit:
+  parallel: true
+  commands:
+    fmt: { run: "pnpm oxfmt --check {staged_files}", glob: "*.{ts,json,md}" }
+    lint: { run: "pnpm oxlint {staged_files}", glob: "*.ts" }
+    typecheck: { run: "pnpm typecheck" }
+    related: { run: "pnpm vitest related --run {staged_files}", glob: "src/**/*.ts" }
+    zizmor: { run: "zizmor --persona auditor .github/workflows/", glob: ".github/**" }
+pre-push:
+  commands:
+    test: { run: "pnpm vitest run" }
