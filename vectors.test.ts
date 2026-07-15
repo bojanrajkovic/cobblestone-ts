@@ -307,61 +307,67 @@ function writerSlices(data: Uint8Array): Uint8Array[] {
   return out;
 }
 
-const HIGH_LEVEL_SUITES = [
-  { url: new URL("./testdata/vectors_aes_128_gcm.json", import.meta.url), mod: cobblestone128 },
-  { url: new URL("./testdata/vectors_aes_256_gcm.json", import.meta.url), mod: cobblestone256 },
-];
+// Loaded once per file (top-level await) rather than inside each test, so
+// 35-vector × 6-category expansion below doesn't re-read/re-inflate the
+// same JSON hundreds of times.
+const HIGH_LEVEL_SUITES = await Promise.all(
+  [
+    { url: new URL("./testdata/vectors_aes_128_gcm.json", import.meta.url), mod: cobblestone128 },
+    { url: new URL("./testdata/vectors_aes_256_gcm.json", import.meta.url), mod: cobblestone256 },
+  ].map(async (suite) => ({ ...suite, vectors: await loadVectors(suite.url) })),
+);
 
-for (const { url, mod } of HIGH_LEVEL_SUITES) {
+// One it() per vector per category (via it.each), not a loop inside a
+// single it() — on slow CI runners a mega-test risks the suite timeout
+// entirely, and a per-vector failure only names itself through an
+// exception message. it.each's `$tcId`/`$comment` title interpolation
+// makes the failing vector the test name instead.
+for (const { url, mod, vectors } of HIGH_LEVEL_SUITES) {
+  const validVectors = vectors.filter((v) => v.result === "valid");
+
   describe(`high-level API against ${url.pathname.split("/").pop()}`, () => {
-    it("one-shot decrypt matches every vector", async () => {
-      const vectors = await loadVectors(url);
+    it("loads exactly 35 vectors", () => {
       expect(vectors).toHaveLength(35);
+    });
 
-      for (const v of vectors) {
+    describe("one-shot decrypt", () => {
+      it.each(vectors)("tc$tcId: $comment", async (v) => {
         const opts: CobblestoneOptions = { context: v.ctxBytes };
-        const label = `tc${v.tcId}: ${v.comment}`;
 
         if (v.result === "valid") {
           const pt = await mod.decrypt(v.key, v.ct, opts);
-          expect(pt.length, label).toBe(v.msgLength);
-          expect(await sha512(pt), label).toEqual(v.msgSha512);
+          expect(pt.length).toBe(v.msgLength);
+          expect(await sha512(pt)).toEqual(v.msgSha512);
         } else {
-          await expect(mod.decrypt(v.key, v.ct, opts), label).rejects.toBeInstanceOf(
+          await expect(mod.decrypt(v.key, v.ct, opts)).rejects.toBeInstanceOf(
             expectedStreamErrorClass(v.tcId),
           );
         }
-      }
+      });
     });
 
-    it("DecryptionStream matches every vector, delivering partial-plaintext prefixes on failure", async () => {
-      const vectors = await loadVectors(url);
-
-      for (const v of vectors) {
+    describe("DecryptionStream", () => {
+      it.each(vectors)("tc$tcId: $comment", async (v) => {
         const opts: CobblestoneOptions = { context: v.ctxBytes };
-        const label = `tc${v.tcId}: ${v.comment}`;
         const { delivered, error } = await driveStream(mod.DecryptionStream, v.key, v.ct, opts);
 
         if (v.result === "valid") {
-          expect(error, label).toBeUndefined();
-          expect(delivered.length, label).toBe(v.msgLength);
-          expect(await sha512(delivered), label).toEqual(v.msgSha512);
+          expect(error).toBeUndefined();
+          expect(delivered.length).toBe(v.msgLength);
+          expect(await sha512(delivered)).toEqual(v.msgSha512);
         } else {
-          expect(error, label).toBeInstanceOf(expectedStreamErrorClass(v.tcId));
+          expect(error).toBeInstanceOf(expectedStreamErrorClass(v.tcId));
           if (v.msgLength !== undefined) {
-            expect(delivered.length, label).toBeGreaterThanOrEqual(v.msgLength);
-            expect(await sha512(delivered.subarray(0, v.msgLength)), label).toEqual(v.msgSha512);
+            expect(delivered.length).toBeGreaterThanOrEqual(v.msgLength);
+            expect(await sha512(delivered.subarray(0, v.msgLength))).toEqual(v.msgSha512);
           }
         }
-      }
+      });
     });
 
-    it("openDecryptingReader matches every vector", async () => {
-      const vectors = await loadVectors(url);
-
-      for (const v of vectors) {
+    describe("openDecryptingReader", () => {
+      it.each(vectors)("tc$tcId: $comment", async (v) => {
         const opts: CobblestoneOptions = { context: v.ctxBytes };
-        const label = `tc${v.tcId}: ${v.comment}`;
         const source = byteRangeSource(v.ct);
 
         let reader: Awaited<ReturnType<typeof mod.openDecryptingReader>> | undefined;
@@ -373,34 +379,30 @@ for (const { url, mod } of HIGH_LEVEL_SUITES) {
         }
 
         if (v.result === "valid") {
-          expect(openError, label).toBeUndefined();
+          expect(openError).toBeUndefined();
           const full = await reader?.readAt(0, reader.plaintextSize);
-          expect(full?.length, label).toBe(v.msgLength);
-          expect(await sha512(full ?? new Uint8Array(0)), label).toEqual(v.msgSha512);
-          expect((await reader?.readAt(reader.plaintextSize, 1))?.length, label).toBe(0);
+          expect(full?.length).toBe(v.msgLength);
+          expect(await sha512(full ?? new Uint8Array(0))).toEqual(v.msgSha512);
+          expect((await reader?.readAt(reader.plaintextSize, 1))?.length).toBe(0);
         } else if (openError !== undefined) {
-          expect(openError, label).toBeInstanceOf(expectedReaderErrorClass(v.tcId));
+          expect(openError).toBeInstanceOf(expectedReaderErrorClass(v.tcId));
         } else {
           // Final chunk happened to authenticate (tc13, tc15, tc33, tc34) —
           // the corruption must still surface on a full read.
-          await expect(reader?.readAt(0, reader.plaintextSize), label).rejects.toBeInstanceOf(
+          await expect(reader?.readAt(0, reader.plaintextSize)).rejects.toBeInstanceOf(
             AuthenticationError,
           );
         }
-      }
+      });
     });
 
-    it("round-trips every valid vector through one-shot and writer-style encryption", async () => {
-      const vectors = await loadVectors(url);
-
-      for (const v of vectors) {
-        if (v.result !== "valid") continue;
+    describe("round-trip (one-shot and writer-style encryption)", () => {
+      it.each(validVectors)("tc$tcId: $comment", async (v) => {
         const opts: CobblestoneOptions = { context: v.ctxBytes };
-        const label = `tc${v.tcId}: ${v.comment}`;
         const pt = await mod.decrypt(v.key, v.ct, opts);
 
         const reEncrypted = await mod.encrypt(v.key, pt, opts);
-        expect(await mod.decrypt(v.key, reEncrypted, opts), label).toEqual(pt);
+        expect(await mod.decrypt(v.key, reEncrypted, opts)).toEqual(pt);
 
         const { delivered, error } = await driveStream(
           mod.EncryptionStream,
@@ -408,42 +410,36 @@ for (const { url, mod } of HIGH_LEVEL_SUITES) {
           writerSlices(pt),
           opts,
         );
-        expect(error, label).toBeUndefined();
-        expect(await mod.decrypt(v.key, delivered, opts), label).toEqual(pt);
-      }
+        expect(error).toBeUndefined();
+        expect(await mod.decrypt(v.key, delivered, opts)).toEqual(pt);
+      });
     });
 
-    it("plaintextSize and ciphertextSize match every valid vector", async () => {
-      const vectors = await loadVectors(url);
-
-      for (const v of vectors) {
-        if (v.result !== "valid") continue;
-        const label = `tc${v.tcId}: ${v.comment}`;
-        if (v.msgLength === undefined) throw new Error(`${label}: valid vector missing msgLength`);
-
-        expect(mod.plaintextSize(v.ct.length), label).toBe(v.msgLength);
-        expect(mod.ciphertextSize(v.msgLength), label).toBe(v.ct.length);
-      }
+    describe("plaintextSize/ciphertextSize", () => {
+      it.each(validVectors)("tc$tcId: $comment", (v) => {
+        if (v.msgLength === undefined) {
+          throw new Error(`tc${v.tcId}: valid vector missing msgLength`);
+        }
+        expect(mod.plaintextSize(v.ct.length)).toBe(v.msgLength);
+        expect(mod.ciphertextSize(v.msgLength)).toBe(v.ct.length);
+      });
     });
 
-    it("tc23/tc24 (bad key size) throw synchronously from constructors and reject from every async entry point", async () => {
-      const vectors = await loadVectors(url);
-
-      for (const v of vectors) {
-        if (v.tcId !== 23 && v.tcId !== 24) continue;
-        const label = `tc${v.tcId}: ${v.comment}`;
-
-        expect(() => new mod.EncryptionStream(v.key), label).toThrow(InvalidKeyError);
-        expect(() => new mod.DecryptionStream(v.key), label).toThrow(InvalidKeyError);
-        await expect(mod.encrypt(v.key, new Uint8Array(0)), label).rejects.toBeInstanceOf(
-          InvalidKeyError,
-        );
-        await expect(mod.decrypt(v.key, v.ct), label).rejects.toBeInstanceOf(InvalidKeyError);
-        await expect(
-          mod.openDecryptingReader(v.key, byteRangeSource(v.ct)),
-          label,
-        ).rejects.toBeInstanceOf(InvalidKeyError);
-      }
+    describe("tc23/tc24 (bad key size)", () => {
+      it.each(vectors.filter((v) => v.tcId === 23 || v.tcId === 24))(
+        "tc$tcId: $comment",
+        async (v) => {
+          expect(() => new mod.EncryptionStream(v.key)).toThrow(InvalidKeyError);
+          expect(() => new mod.DecryptionStream(v.key)).toThrow(InvalidKeyError);
+          await expect(mod.encrypt(v.key, new Uint8Array(0))).rejects.toBeInstanceOf(
+            InvalidKeyError,
+          );
+          await expect(mod.decrypt(v.key, v.ct)).rejects.toBeInstanceOf(InvalidKeyError);
+          await expect(
+            mod.openDecryptingReader(v.key, byteRangeSource(v.ct)),
+          ).rejects.toBeInstanceOf(InvalidKeyError);
+        },
+      );
     });
   });
 }
