@@ -27,7 +27,7 @@ export async function deriveMessageParams(
   context: string | Uint8Array,
 ): Promise<MessageParams> {
   if (inputKey.length !== d.keySize) {
-    throw new InvalidKeyError(`input key must be ${d.keySize} bytes, got ${inputKey.length}`);
+    throw new InvalidKeyError(`key must be ${d.keySize} bytes, got ${inputKey.length}`);
   }
   if (salt.length !== SALT_SIZE) {
     throw new InvalidSizeError(`salt must be ${SALT_SIZE} bytes, got ${salt.length}`);
