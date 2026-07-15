@@ -1,4 +1,6 @@
 [tools]
+bun = "1"
+deno = "2"
 lefthook = "2"
 node = "24"
 pnpm = "11"
