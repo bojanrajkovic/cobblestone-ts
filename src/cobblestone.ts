@@ -31,7 +31,7 @@ export interface CobblestoneOptions {
   context?: string | Uint8Array;
 }
 
-interface CobblestoneInstance {
+export interface CobblestoneInstance {
   readonly KEY_SIZE: number;
   encrypt(key: Uint8Array, plaintext: Uint8Array, opts?: CobblestoneOptions): Promise<Uint8Array>;
   decrypt(key: Uint8Array, ciphertext: Uint8Array, opts?: CobblestoneOptions): Promise<Uint8Array>;
