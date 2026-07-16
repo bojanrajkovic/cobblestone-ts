@@ -87,32 +87,15 @@ function normalizeContext(context: string | Uint8Array | undefined): Uint8Array 
   return typeof context === "string" ? utf8(context) : context;
 }
 
-async function collect(readable: ReadableStream<Uint8Array>): Promise<Uint8Array> {
-  const chunks: Uint8Array[] = [];
-  const reader = readable.getReader();
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    chunks.push(value);
-  }
-  return concat(...chunks);
-}
-
-// Drains a freshly-constructed stream with a single write, propagating
-// exactly one error however either side fails. The collector is attached
-// before the write starts, so backpressure never stalls the pipe.
-async function runOneShot(
-  stream: TransformStream<Uint8Array, Uint8Array>,
-  input: Uint8Array,
-): Promise<Uint8Array> {
-  const writer = stream.writable.getWriter();
-  const output = collect(stream.readable);
-  const written = writer.write(input).then(() => writer.close());
-
-  const [outputResult, writtenResult] = await Promise.allSettled([output, written]);
-  if (outputResult.status === "rejected") throw outputResult.reason;
-  if (writtenResult.status === "rejected") throw writtenResult.reason;
-  return outputResult.value;
+// A minimal TransformStreamDefaultController stand-in that writes straight
+// into a pre-sized output buffer instead of enqueueing into a real stream.
+// One-shot encrypt/decrypt drive encryptTransformer/decryptTransformer
+// directly through this — same tested chunk-framing/error logic, without
+// constructing a TransformStream or collecting+concatenating its output.
+function sinkController(
+  sink: (chunk: Uint8Array) => void,
+): TransformStreamDefaultController<Uint8Array> {
+  return { enqueue: sink } as TransformStreamDefaultController<Uint8Array>;
 }
 
 export function makeCobblestone(d: AeadDescriptor): CobblestoneInstance {
@@ -193,6 +176,80 @@ export function makeCobblestone(d: AeadDescriptor): CobblestoneInstance {
     }
   }
 
+  async function encryptOneShot(
+    key: Uint8Array,
+    plaintext: Uint8Array,
+    opts?: CobblestoneOptions,
+  ): Promise<Uint8Array> {
+    const context = normalizeContext(opts?.context);
+
+    const salt = crypto.getRandomValues(new Uint8Array(SALT_SIZE));
+    const { aeadKey, baseNonce, commitment } = await deriveMessageParams(d, key, salt, context);
+    const aead = await aesGcm(aeadKey);
+
+    const out = new Uint8Array(ciphertextSize(plaintext.length));
+    out.set(salt, 0);
+    out.set(commitment, SALT_SIZE);
+
+    let offset = HEADER_SIZE;
+    const controller = sinkController((chunk) => {
+      out.set(chunk, offset);
+      offset += chunk.length;
+    });
+
+    const transformer = encryptTransformer(aead, baseNonce);
+    await transformer.transform(plaintext, controller);
+    await transformer.flush(controller);
+
+    return out;
+  }
+
+  async function decryptOneShot(
+    key: Uint8Array,
+    ciphertext: Uint8Array,
+    opts?: CobblestoneOptions,
+  ): Promise<Uint8Array> {
+    if (key.length !== d.keySize) {
+      throw new InvalidKeyError(`key must be ${d.keySize} bytes, got ${key.length}`);
+    }
+    if (ciphertext.length < HEADER_SIZE) {
+      throw new TruncationError(`truncated header: ${ciphertext.length} of ${HEADER_SIZE} bytes`);
+    }
+    const context = normalizeContext(opts?.context);
+
+    const salt = ciphertext.subarray(0, SALT_SIZE);
+    const commitment = ciphertext.subarray(SALT_SIZE, HEADER_SIZE);
+    const body = ciphertext.subarray(HEADER_SIZE);
+
+    const derived = await deriveMessageParams(d, key, salt, context);
+    if (!constantTimeEqual(derived.commitment, commitment)) {
+      throw new CommitmentMismatchError("derived commitment does not match header");
+    }
+    const aead = await aesGcm(derived.aeadKey);
+
+    // Upper bound, not the exact size: the encrypted body always strips at
+    // least one CHUNK_OVERHEAD-sized tag, so this can only over-allocate.
+    // decryptTransformer's own transform/flush stay the sole source of
+    // truth for truncation/auth/overflow errors — deliberately not
+    // precomputed via plaintextSize(), which validates structural size
+    // upfront and would throw InvalidSizeError instead of TruncationError
+    // for a malformed body (see the reader's own InvalidSizeError remap
+    // in vectors.test.ts — one-shot decrypt must keep the stream's error
+    // classes, not the reader's).
+    const out = new Uint8Array(body.length);
+    let offset = 0;
+    const controller = sinkController((chunk) => {
+      out.set(chunk, offset);
+      offset += chunk.length;
+    });
+
+    const transformer = decryptTransformer(aead, derived.baseNonce);
+    await transformer.transform(body, controller);
+    await transformer.flush(controller);
+
+    return out.subarray(0, offset);
+  }
+
   async function openDecryptingReader(
     key: Uint8Array,
     source: Blob | ByteRangeSource,
@@ -250,12 +307,8 @@ export function makeCobblestone(d: AeadDescriptor): CobblestoneInstance {
 
   return {
     KEY_SIZE: d.keySize,
-    // async, not a plain arrow returning runOneShot's promise: a bad key
-    // size throws synchronously from `new EncryptionStream`/`DecryptionStream`,
-    // and one-shots must reject rather than throw across the call.
-    encrypt: async (key, plaintext, opts) => runOneShot(new EncryptionStream(key, opts), plaintext),
-    decrypt: async (key, ciphertext, opts) =>
-      runOneShot(new DecryptionStream(key, opts), ciphertext),
+    encrypt: encryptOneShot,
+    decrypt: decryptOneShot,
     EncryptionStream,
     DecryptionStream,
     openDecryptingReader,

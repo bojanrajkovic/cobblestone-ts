@@ -1,7 +1,17 @@
 import { createCipheriv } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { AuthenticationError, InvalidKeyError } from "../errors.js";
-import { aesGcm } from "./aes-gcm.js";
+import { aesGcm, nodeCryptoFastPathActive } from "./aes-gcm.js";
+
+// Guards the forced-webcrypto vitest project: if the env var ever stops
+// reaching module evaluation, that project silently degrades into a
+// duplicate fast-path run — this is the test that catches it.
+it.runIf(process.env["COBBLESTONE_FORCE_WEBCRYPTO"] === "1")(
+  "COBBLESTONE_FORCE_WEBCRYPTO=1 disables the fast path",
+  () => {
+    expect(nodeCryptoFastPathActive).toBe(false);
+  },
+);
 
 describe("aesGcm round-trip", () => {
   const key = crypto.getRandomValues(new Uint8Array(16));
@@ -44,6 +54,20 @@ describe("aesGcm round-trip", () => {
 
   it.each([15, 17, 24, 33])("rejects a %d-byte key", async (size) => {
     await expect(aesGcm(new Uint8Array(size))).rejects.toThrow(InvalidKeyError);
+  });
+
+  it("is immune to the caller mutating the key after aesGcm() resolves", async () => {
+    const mutableKey = crypto.getRandomValues(new Uint8Array(16));
+    const originalKey = mutableKey.slice();
+    const aead = await aesGcm(mutableKey);
+
+    mutableKey.fill(0); // simulate zeroing key material once the Aead is derived
+
+    const plaintext = new Uint8Array([1, 2, 3]);
+    const sealed = await aead.seal(nonce, plaintext);
+
+    const referenceAead = await aesGcm(originalKey);
+    expect(sealed).toEqual(await referenceAead.seal(nonce, plaintext));
   });
 });
 
