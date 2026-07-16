@@ -1,7 +1,17 @@
 import { createCipheriv } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { AuthenticationError, InvalidKeyError } from "../errors.js";
-import { aesGcm } from "./aes-gcm.js";
+import { aesGcm, nodeCryptoFastPathActive } from "./aes-gcm.js";
+
+// Guards the forced-webcrypto vitest project: if the env var ever stops
+// reaching module evaluation, that project silently degrades into a
+// duplicate fast-path run — this is the test that catches it.
+it.runIf(process.env["COBBLESTONE_FORCE_WEBCRYPTO"] === "1")(
+  "COBBLESTONE_FORCE_WEBCRYPTO=1 disables the fast path",
+  () => {
+    expect(nodeCryptoFastPathActive).toBe(false);
+  },
+);
 
 describe("aesGcm round-trip", () => {
   const key = crypto.getRandomValues(new Uint8Array(16));

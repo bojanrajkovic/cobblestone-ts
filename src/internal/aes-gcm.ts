@@ -13,12 +13,15 @@ export interface Aead {
 // have real native sync bindings. Deno and workerd are excluded: their node:crypto
 // is a shim over the same underlying WebCrypto primitives and measured slower, not
 // faster, there. See github.com/bojanrajkovic/cobblestone-ts/issues/5.
+// COBBLESTONE_FORCE_WEBCRYPTO=1 forces the WebCrypto path — the escape hatch if
+// the fast path ever misbehaves, and how CI covers both paths on Node/Bun.
 export const nodeCryptoFastPathActive: boolean =
   typeof process !== "undefined" &&
   typeof process.versions?.node === "string" &&
   !("Deno" in globalThis) &&
   (globalThis as { navigator?: { userAgent?: string } }).navigator?.userAgent !==
-    "Cloudflare-Workers";
+    "Cloudflare-Workers" &&
+  process.env["COBBLESTONE_FORCE_WEBCRYPTO"] !== "1";
 
 // Cached across calls (module evaluation is memoized by the runtime regardless,
 // but re-resolving the specifier still walks the ESM loader every time — measured
