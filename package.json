@@ -39,17 +39,17 @@
     "test:workerd": "vitest run --config vitest.workerd.config.ts"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "0.18.2",
-    "@tsconfig/node24": "24.0.4",
+    "@cloudflare/vitest-pool-workers": "0.22.0",
+    "@tsconfig/node24": "24.0.5",
     "@tsconfig/strictest": "2.0.8",
     "@types/node": "24.13.3",
-    "@vitest/browser-playwright": "4.1.10",
-    "@vitest/coverage-v8": "4.1.10",
-    "oxfmt": "0.59.0",
-    "oxlint": "1.74.0",
-    "playwright": "1.61.1",
+    "@vitest/browser-playwright": "4.1.11",
+    "@vitest/coverage-v8": "4.1.11",
+    "oxfmt": "0.67.0",
+    "oxlint": "1.82.0",
+    "playwright": "1.63.0",
     "typescript": "7.0.2",
-    "vitest": "4.1.10"
+    "vitest": "4.1.11"
   },
   "engines": {
     "node": ">=24"
