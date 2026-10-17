@@ -39,7 +39,7 @@
     "test:workerd": "vitest run --config vitest.workerd.config.ts"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "0.18.2",
+    "@cloudflare/vitest-plugin": "1.4.0",
     "@tsconfig/node24": "24.0.4",
     "@tsconfig/strictest": "2.0.8",
     "@types/node": "24.13.3",
